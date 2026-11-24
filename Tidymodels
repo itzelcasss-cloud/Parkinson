@@ -1,0 +1,39 @@
+install.packages("readr")
+install.packages("broom.mixed")
+install.packages("remotes")
+install.packages("here")
+if (!require("remotes")) install.packages("remotes"); remotes::install_github("fsolt/dotwhisker")
+
+library("readr")
+library("broom.mixed")
+library("dotwhisker")
+library("here")
+
+urchins <- read_csv("https://tidymodels.org/start/models/urchins.csv") |>
+setNames(c("food_regime", "initial_volume", "Width")) |>
+mutate(food_regime = factor(food_regime, levels = c("Initial", "Low", "High")))
+#For each of the 72 urchins, we know their:
+#experimental feeding regime group (food_regime: either Initial, Low, or High),
+#size in milliliters at the start of the experiment (initial_volume), and
+#suture width at the end of the experiment (width).
+
+ggplot(urchins,
+aes(x = initial_volume,
+y = Width,
+group = food_regime,
+col = food_regime)) +
+geom_point() +
+geom_smooth(method = lm, se = FALSE) +
+scale_color_viridis_d(option = "plasma", end = .7)
+
+lm_mod <- linear_reg()
+lm.fit <- # fit() para entrenar o estimar el modelo
+lm_mod |>
+fit(Width ~ initial_volume * food_regime, data=urchins)
+lm.fit
+tidy(lm.fit) #como summary pero en formato mas predecible y util
+
+tidy(lm.fit) |>
+dwplot(dot_args = list(size = 2, color = "#7C7C7C"),
+whisker_args = list(color = "#7C7C7C"),
+vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
