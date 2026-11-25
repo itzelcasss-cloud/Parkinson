@@ -1,39 +1,150 @@
+# Aprendiendo tidymodels
+
 install.packages("readr")
 install.packages("broom.mixed")
 install.packages("remotes")
 install.packages("here")
 if (!require("remotes")) install.packages("remotes"); remotes::install_github("fsolt/dotwhisker")
+remove.packages(c("StanHeaders", "rstan"))
+install.packages("rstan", repos = c('https://stan-dev.r-universe.dev', getOption("repos")))
+Sys.setenv(MAKEFLAGS = "-j2")
+Sys.setenv("R_REMOTES_NO_ERRORS_FROM_WARNINGS" = "true")
+remotes::install_github("stan-dev/rstanarm", INSTALL_opts = "--no-multiarch", force = TRUE)
+install.packages("parsnip")
 
 library("readr")
 library("broom.mixed")
 library("dotwhisker")
 library("here")
+library("tidyverse")
+library("bayesplot")
+library("ggplot2")
+library("rstanarm")
+library("parsnip")
 
-urchins <- read_csv("https://tidymodels.org/start/models/urchins.csv") |>
-setNames(c("food_regime", "initial_volume", "Width")) |>
-mutate(food_regime = factor(food_regime, levels = c("Initial", "Low", "High")))
+# ---- PARSNIP ----- 
+urchins <- read_csv("https://tidymodels.org/start/models/urchins.csv") |> 
+  setNames(c("food_regime", "initial_volume", "Width")) |> 
+  mutate(food_regime = factor(food_regime, levels = c("Initial", "Low", "High")))
 #For each of the 72 urchins, we know their:
-#experimental feeding regime group (food_regime: either Initial, Low, or High),
-#size in milliliters at the start of the experiment (initial_volume), and
-#suture width at the end of the experiment (width).
+  #experimental feeding regime group (food_regime: either Initial, Low, or High),
+  #size in milliliters at the start of the experiment (initial_volume), and
+  #suture width at the end of the experiment (width).
 
 ggplot(urchins,
-aes(x = initial_volume,
-y = Width,
-group = food_regime,
-col = food_regime)) +
-geom_point() +
-geom_smooth(method = lm, se = FALSE) +
-scale_color_viridis_d(option = "plasma", end = .7)
+       aes(x = initial_volume, 
+           y = Width, 
+           group = food_regime, 
+           col = food_regime)) + 
+  geom_point() + 
+  geom_smooth(method = lm, se = FALSE) +
+  scale_color_viridis_d(option = "plasma", end = .7)
 
 lm_mod <- linear_reg()
-lm.fit <- # fit() para entrenar o estimar el modelo
-lm_mod |>
-fit(Width ~ initial_volume * food_regime, data=urchins)
-lm.fit
-tidy(lm.fit) #como summary pero en formato mas predecible y util
+lm.fit <-                     # fit() to train and estimate the model 
+  lm_mod |> 
+  fit(Width ~ initial_volume * food_regime, data=urchins)
+lm.fit  
+tidy(lm.fit) #like summary but more predictable and useful 
 
 tidy(lm.fit) |>
-dwplot(dot_args = list(size = 2, color = "#7C7C7C"),
-whisker_args = list(color = "#7C7C7C"),
-vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+  dwplot(dot_args = list(size = 2, color = "#7C7C7C"),
+         whisker_args = list(color = "#7C7C7C"),
+         vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+
+#Use a model to predict
+new_points <- expand.grid(initial_volume = 20,
+                          food_regime = c("Initial", "Low", "High"))
+new_points
+mean_pred <- predict(lm.fit, new_data = new_points)
+mean_pred
+
+conf_int_pred <- predict(lm.fit, 
+                         new_data = new_points,
+                         type = "conf_int")
+conf_int_pred
+plot_data <- 
+  new_points |> 
+  bind_cols(mean_pred) |> 
+  bind_cols(conf_int_pred)
+
+ggplot(plot_data, aes(x = food_regime)) + 
+  geom_point(aes(y = .pred)) + 
+  geom_errorbar(aes(ymin = .pred_lower, 
+                    ymax = .pred_upper),
+                width = .2) + 
+  labs(y = "urchin size")
+
+#Model with a different engine 
+prior_dist <- rstanarm::student_t(df=1)     #set the prior distribution
+set.seed(123)
+bayes_mod <-   
+  linear_reg() |> 
+  set_engine("stan",
+             prior_intercept = prior_dist,
+             prior = prior_dist,
+             refresh = 0)
+
+#train the model 
+bayes_fit <- 
+  bayes_mod |> 
+  fit(Width ~ initial_volume * food_regime, data = urchins)
+print(bayes_fit, digits=5)
+tidy(bayes_fit, conf.int = TRUE)
+
+bayes_plot_data <- 
+  new_points |> 
+  bind_cols(predict(bayes_fit, new_data = new_points)) |> 
+  bind_cols(predict(bayes_fit, new_data = new_points, type = "conf_int"))
+ggplot(bayes_plot_data, aes(x = food_regime)) + 
+  geom_point(aes(y = .pred)) + 
+  geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper), width = .2) + 
+  labs(y = "urchin size") + 
+  ggtitle("Bayesian model with t(1) prior distribution")
+
+
+# --- RECIPES --- used to help you process ypur data BEFORE training your model 
+install.packages("recipes")
+install.packages("kableExtra")
+install.packages("lubridate")
+install.packages("nycflights13")
+install.packages("skimr")
+install.packages("timeDate")
+install.packages("rsample")
+
+library("recipes")
+library("kableExtra")
+library("lubridate")
+library("nycflights13")
+library("skimr")
+library("timeDate")
+library("rsample")
+
+set.seed(123)
+flight_data <- 
+  flights |> 
+  mutate(
+    arr_delay = ifelse(arr_delay >= 30, "late", "on_time"), #convert arrival delay to a factor
+    arr_delay = factor(arr_delay),
+    date = lubridate::as_date(time_hour)
+  ) |> 
+  inner_join(weather, by = c("origin", "time_hour")) |> #include the weather data
+  select(dep_time, flight, origin, dest, air_time, distance, carrier, date, arr_delay, time_hour) |> 
+  na.omit() |> #exclude missing data
+  mutate_if(is.character, as.factor)  #for creating models, its better to have qualitive columns encoded AS FACTORS!!! (instead of character)
+
+flight_data |> 
+  count(arr_delay) |> 
+  mutate(prop= n/sum(n))
+
+glimpse(flight_data)
+flight_data |> 
+  skimr::skim(dest, carrier)
+
+set.seed(222)
+data_split <- initial_split(flight_data, prop = 3/4)   #put 3/4 of the data into the training set
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+flights_rec <- 
+  recipe(arr_delay ~ ., data= train_data)
